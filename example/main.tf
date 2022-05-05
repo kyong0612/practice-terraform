@@ -95,3 +95,19 @@ resource "aws_s3_bucket_cors_configuration" "public-cors" {
     max_age_seconds = 3000
   }
 }
+
+resource "aws_s3_bucket" "alb_log" {
+  bucket = "alb-log-progmatic-terraform20220505185403"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb-log-lc" {
+  bucket = aws_s3_bucket.alb_log.bucket
+
+  rule {
+    id = aws_s3_bucket.alb_log.id
+    status = "Enabled"
+    expiration {
+      days = "180"
+    }
+  }
+}
