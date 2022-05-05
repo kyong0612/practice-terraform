@@ -32,6 +32,7 @@ provider "aws" {
 resource "aws_s3_bucket" "private" {
   bucket = "private-pragmatic-terraform20220505173053"
 
+force_destroy = true
   ////// Deprecated
   // NOTE: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket#using-versioning
   # versioning {
@@ -78,6 +79,7 @@ resource "aws_s3_bucket_public_access_block" "private" {
 
 resource "aws_s3_bucket" "public" {
   bucket = "public-pragmatic-terraform20220505173317"
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_acl" "punlic_acl" {
@@ -98,16 +100,37 @@ resource "aws_s3_bucket_cors_configuration" "public-cors" {
 
 resource "aws_s3_bucket" "alb_log" {
   bucket = "alb-log-progmatic-terraform20220505185403"
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "alb-log-lc" {
   bucket = aws_s3_bucket.alb_log.bucket
 
   rule {
-    id = aws_s3_bucket.alb_log.id
+    id     = aws_s3_bucket.alb_log.id
     status = "Enabled"
     expiration {
       days = "180"
+    }
+  }
+}
+
+// バケットポリシー
+resource "aws_s3_bucket_policy" "alb_log" {
+  bucket = aws_s3_bucket.alb_log.id
+  policy = data.aws_iam_policy_document.alb_log.json
+}
+
+data "aws_iam_policy_document" "alb_log" {
+  statement {
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+
+    resources = ["arn:aws:s3:::${aws_s3_bucket.alb_log.id}/*"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["582318560864"]
     }
   }
 }
