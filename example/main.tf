@@ -69,9 +69,29 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "private" {
 // パブリックブロックアクセス
 // 予期しないオブジェクトの公開防止
 resource "aws_s3_bucket_public_access_block" "private" {
-  bucket              = aws_s3_bucket.private.id
-  block_public_acls   = true
-  block_public_policy = true
-  ignore_public_acls = true
+  bucket                  = aws_s3_bucket.private.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket" "public" {
+  bucket = "public-pragmatic-terraform20220505173317"
+}
+
+resource "aws_s3_bucket_acl" "punlic_acl" {
+  bucket = aws_s3_bucket.public.id
+  acl    = "public-read"
+}
+
+resource "aws_s3_bucket_cors_configuration" "public-cors" {
+  bucket = aws_s3_bucket.public.bucket
+
+  cors_rule {
+    allowed_origins = ["https://example.com"]
+    allowed_methods = ["GET"]
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
+  }
 }
