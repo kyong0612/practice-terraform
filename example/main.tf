@@ -3,134 +3,98 @@ provider "aws" {
   region = "ap-northeast-1"
 }
 
-# module "web_server" {
-#   source        = "./http_server"
-#   instance_type = "t3.micro"
-# }
-# output "public_dns" {
-#   value = module.web_server.public_dns
-# }
 
-#### IAM
-# data "aws_iam_policy_document" "allow_description_regions" {
-#   // リージョン一覧を取得
-#   statement {
-#     effect = "Allow"
-#     actions   = ["ec2:DescribeRegions"]
-#     resources = ["*"]
-#   }
-# }
-# module "describe_regions_for_ec2" {
-#   source = "./iam_role"
-#   name = "describe-regions-for-ec2"
-#   identifier = "ec2.amazonaws.com"
-#   policy = data.aws_iam_policy_document.allow_description_regions.json
-# }
+// # パブリックネットワーク
+// ## VPC - 他のネットワークから論理的に切り離されている仮想ネットワーク
+resource "aws_vpc" "example" {
+  cidr_block = "10.0.0.0/16" 
+  enable_dns_support = true // 名前解決
+  enable_dns_hostnames = true
 
-
-### S3
-resource "aws_s3_bucket" "private" {
-  bucket = "private-pragmatic-terraform20220505173053"
-
-force_destroy = true
-  ////// Deprecated
-  // NOTE: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket#using-versioning
-  # versioning {
-  #   enabled= true
-  # }
-
-  ////// Deprecated
-  // NOTE: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket#enable-default-server-side-encryption
-  # server_side_encryption_configuration {
-  #   rule {
-  #     apply_serverside_encryption_by_default{
-  #       sse_algorithm = "AES256"
-  #     }
-  #   }
-  # }
-}
-
-resource "aws_s3_bucket_versioning" "private" {
-  bucket = aws_s3_bucket.private.id
-  versioning_configuration {
-    status = "Enabled"
+  tags = {
+    "Name" = "example"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "private" {
-  bucket = aws_s3_bucket.private.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
+// ## パブリックサブネット
+resource "aws_subnet" "public" {
+  vpc_id = aws_vpc.example.id
+  cidr_block = "10.0.0.0/24"
+  map_public_ip_on_launch = true
+  availability_zone = "ap-northeast-1a" // リージョン内の複数のロケーション
 }
 
-// パブリックブロックアクセス
-// 予期しないオブジェクトの公開防止
-resource "aws_s3_bucket_public_access_block" "private" {
-  bucket                  = aws_s3_bucket.private.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+// ## インターネットゲートウェイ
+resource "aws_internet_gateway" "example" {
+  vpc_id = aws_vpc.example.id
 }
 
-resource "aws_s3_bucket" "public" {
-  bucket = "public-pragmatic-terraform20220505173317"
-  force_destroy = true
+// ## ルートテーブル
+// ネットワークにデータを流すため、ルーティング情報を管理するルートテーブルが必要
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.example.id
 }
 
-resource "aws_s3_bucket_acl" "punlic_acl" {
-  bucket = aws_s3_bucket.public.id
-  acl    = "public-read"
+// ルートテーブルは少し特殊な仕様がある。
+// VPC内の通信を有効にするため、ローカルルートが自動的に作成される
+// ローカルルートは変更や削除ができず、Terraformからも削除ができない
+
+// ルート
+// ルートはルートテーブルの1レコードに該当
+resource "aws_route" "public" {
+  route_table_id = aws_route_table.public.id
+  gateway_id = aws_internet_gateway.example.id
+  // VP以外への通信をインターネットゲートウェイ経由でインターネットへデータを流すために、デフォルトルート(0.0.0.0/0)をdestination_cidr_blockに指定する
+  destination_cidr_block = "0.0.0.0/0"
 }
 
-resource "aws_s3_bucket_cors_configuration" "public-cors" {
-  bucket = aws_s3_bucket.public.bucket
-
-  cors_rule {
-    allowed_origins = ["https://example.com"]
-    allowed_methods = ["GET"]
-    allowed_headers = ["*"]
-    max_age_seconds = 3000
-  }
+// ルートテーブルの関連付け
+// 関連付けを忘れた場合は、デフォルトルートテーブルが自動的に使われる(アンチパターン)
+resource "aws_route_table_association" "public" {
+  subnet_id = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
 }
 
-resource "aws_s3_bucket" "alb_log" {
-  bucket = "alb-log-progmatic-terraform20220505185403"
-  force_destroy = true
+// # プライベートネットワーク
+// インターネットから隔離されたネットワーク
+// DBサーバのような、インターネットからアクセスしないリソースを配置する
+
+// ## プライベートサブネット
+// - サブネット
+resource "aws_subnet" "private" {
+  vpc_id = aws_vpc.example.id
+  cidr_block = "10.0.64.0/24"
+  availability_zone = "ap-northeast-1a"
+  map_public_ip_on_launch = false
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "alb-log-lc" {
-  bucket = aws_s3_bucket.alb_log.bucket
-
-  rule {
-    id     = aws_s3_bucket.alb_log.id
-    status = "Enabled"
-    expiration {
-      days = "180"
-    }
-  }
+// - ルートテーブルと関連付け
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.example.id
 }
 
-// バケットポリシー
-resource "aws_s3_bucket_policy" "alb_log" {
-  bucket = aws_s3_bucket.alb_log.id
-  policy = data.aws_iam_policy_document.alb_log.json
+resource "aws_route_table_association" "private" {
+  subnet_id = aws_subnet.private.id
+  route_table_id = aws_route_table.private.id
 }
 
-data "aws_iam_policy_document" "alb_log" {
-  statement {
-    effect  = "Allow"
-    actions = ["s3:PutObject"]
+// ### NATゲートウェイ
+// NAT(Nwtwork Address Translation)サーバを導入すると、プライベートネットワークからインターネットへアクセスできるようになる。
 
-    resources = ["arn:aws:s3:::${aws_s3_bucket.alb_log.id}/*"]
+// - EIP
+// NATゲートウェイにはEIP(Elastic IP Address)が必要
+// EIPは静的なパブリックIPアドレスを付与するサービス
+resource "aws_eip" "nat_gateway" {
+  vpc = true
+  depends_on = [aws_internet_gateway.example]
+}
 
-    principals {
-      type        = "AWS"
-      identifiers = ["582318560864"]
-    }
-  }
+// - NATゲートウェイge-touxei
+
+resource "aws_nat_gateway" "example" {
+  allocation_id = aws_eip.nat_gateway.id
+  subnet_id = aws_subnet.public.id
+  depends_on = [
+    aws_internet_gateway.example
+  ]
 }
